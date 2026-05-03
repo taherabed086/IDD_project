@@ -3,8 +3,7 @@ import torch
 import numpy as np
 from PIL import Image
 import segmentation_models_pytorch as smp
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
+import torchvision.transforms as T
 import matplotlib.pyplot as plt
 import io
 import time
@@ -262,10 +261,10 @@ CLASS_INFO = {
 MEAN = [0.485, 0.456, 0.406]
 STD  = [0.229, 0.224, 0.225]
 
-val_transform = A.Compose([
-    A.Resize(512, 512),
-    A.Normalize(mean=MEAN, std=STD),
-    ToTensorV2()
+val_transform = T.Compose([
+    T.Resize((512, 512)),
+    T.ToTensor(),
+    T.Normalize(mean=MEAN, std=STD),
 ])
 
 # ─────────────────────────────────────────────
@@ -300,8 +299,8 @@ def load_model(_=None):
 #  INFERENCE
 # ─────────────────────────────────────────────
 def predict(image_np, model, device):
-    transformed = val_transform(image=image_np)
-    tensor = transformed["image"].unsqueeze(0).to(device)
+    pil_img = Image.fromarray(image_np)
+    tensor  = val_transform(pil_img).unsqueeze(0).to(device)
     with torch.no_grad():
         logits = model(tensor)
     pred = torch.argmax(logits, dim=1).squeeze(0).cpu().numpy()
