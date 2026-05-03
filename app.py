@@ -1,13 +1,11 @@
 import streamlit as st
 import torch
-import cv2
 import numpy as np
 from PIL import Image
 import segmentation_models_pytorch as smp
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import io
 import time
 import os
@@ -317,8 +315,9 @@ def mask_to_color(pred_mask):
     return color_mask
 
 def overlay(image_np, color_mask, alpha=0.55):
-    img_resized = cv2.resize(image_np, (color_mask.shape[1], color_mask.shape[0]))
-    return cv2.addWeighted(img_resized, 1 - alpha, color_mask, alpha, 0)
+    h, w = color_mask.shape[:2]
+    img_resized = np.array(Image.fromarray(image_np).resize((w, h)))
+    return ((1 - alpha) * img_resized + alpha * color_mask).astype(np.uint8)
 
 def get_class_distribution(pred_mask):
     total = pred_mask.size
@@ -428,9 +427,8 @@ with col_upload:
     )
 
     if uploaded:
-        file_bytes = np.frombuffer(uploaded.read(), np.uint8)
-        img_bgr    = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        img_rgb    = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        pil_img = Image.open(uploaded).convert("RGB")
+        img_rgb = np.array(pil_img)
         st.image(img_rgb, caption="Input Image", use_container_width=True)
 
         h, w = img_rgb.shape[:2]
