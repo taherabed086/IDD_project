@@ -533,7 +533,7 @@ with col_result:
                 ax.set_xlabel("Coverage (%)", color="#64748b", fontsize=9)
                 ax.tick_params(colors="#94a3b8", labelsize=8)
                 for spine in ax.spines.values():
-                    spine.set_edgecolor("rgba(255,255,255,0.07)")
+                    spine.set_edgecolor("#1a2235")
                 ax.invert_yaxis()
                 ax.xaxis.label.set_color("#64748b")
                 plt.tight_layout()
