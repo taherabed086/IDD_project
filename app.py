@@ -1,4 +1,3 @@
-
 import streamlit as st
 import torch
 import cv2
@@ -11,7 +10,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import io
 import time
- 
+import os
+import gdown
+
 # ─────────────────────────────────────────────
 #  PAGE CONFIG
 # ─────────────────────────────────────────────
@@ -21,14 +22,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
- 
+
 # ─────────────────────────────────────────────
 #  CUSTOM CSS
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
- 
+
 :root {
     --bg:        #0a0e17;
     --surface:   #111827;
@@ -40,17 +41,17 @@ st.markdown("""
     --success:   #10b981;
     --border:    rgba(255,255,255,0.07);
 }
- 
+
 html, body, [class*="css"] {
     font-family: 'DM Sans', sans-serif;
     background-color: var(--bg);
     color: var(--text);
 }
- 
+
 /* ── Hide Streamlit chrome ── */
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding: 2rem 2.5rem 3rem; max-width: 1400px; }
- 
+
 /* ── Hero banner ── */
 .hero {
     background: linear-gradient(135deg, #0d1b2a 0%, #1a0533 50%, #0a1628 100%);
@@ -108,7 +109,7 @@ html, body, [class*="css"] {
     line-height: 1.7;
     margin: 0;
 }
- 
+
 /* ── Stat pills ── */
 .stats-row { display: flex; gap: 1rem; margin-top: 2rem; flex-wrap: wrap; }
 .stat-pill {
@@ -125,7 +126,7 @@ html, body, [class*="css"] {
     color: var(--accent);
 }
 .stat-pill .lbl { font-size: 0.78rem; color: var(--muted); }
- 
+
 /* ── Cards ── */
 .card {
     background: var(--surface);
@@ -143,7 +144,7 @@ html, body, [class*="css"] {
     color: var(--muted);
     margin-bottom: 1rem;
 }
- 
+
 /* ── Upload zone ── */
 .upload-zone {
     background: linear-gradient(135deg, rgba(0,212,255,0.04), rgba(124,58,237,0.04));
@@ -155,7 +156,7 @@ html, body, [class*="css"] {
 }
 .upload-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
 .upload-text { color: var(--muted); font-size: 0.9rem; }
- 
+
 /* ── Predict button ── */
 .stButton > button {
     width: 100%;
@@ -176,7 +177,7 @@ html, body, [class*="css"] {
     transform: translateY(-2px) !important;
     box-shadow: 0 8px 32px rgba(0,212,255,0.4) !important;
 }
- 
+
 /* ── Legend badge ── */
 .legend-grid { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .legend-item {
@@ -190,7 +191,7 @@ html, body, [class*="css"] {
     width: 10px; height: 10px;
     border-radius: 3px; flex-shrink: 0;
 }
- 
+
 /* ── Metric cards ── */
 .metric-box {
     background: var(--surface2);
@@ -206,14 +207,14 @@ html, body, [class*="css"] {
     color: var(--accent);
 }
 .metric-lbl { font-size: 0.75rem; color: var(--muted); margin-top: 0.2rem; }
- 
+
 /* ── Sidebar ── */
 section[data-testid="stSidebar"] {
     background: var(--surface) !important;
     border-right: 1px solid var(--border) !important;
 }
 section[data-testid="stSidebar"] * { color: var(--text) !important; }
- 
+
 /* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {
     background: var(--surface) !important;
@@ -230,23 +231,23 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
     background: linear-gradient(135deg, rgba(0,212,255,0.2), rgba(124,58,237,0.2)) !important;
     color: var(--accent) !important;
 }
- 
+
 /* ── Progress bar ── */
 .stProgress > div > div { background: linear-gradient(90deg, #00d4ff, #7c3aed) !important; border-radius: 99px !important; }
- 
+
 /* ── Images ── */
 img { border-radius: 12px !important; }
- 
+
 /* ── Selectbox / slider ── */
 .stSelectbox > div > div, .stSlider { color: var(--text) !important; }
 </style>
 """, unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────
 #  CONSTANTS
 # ─────────────────────────────────────────────
 NUM_CLASSES = 10
- 
+
 CLASS_INFO = {
     0:  {"name": "Road",          "color": (128, 64,128)},
     1:  {"name": "Sidewalk",      "color": ( 70,130,180)},
@@ -259,34 +260,44 @@ CLASS_INFO = {
     8:  {"name": "Sky",           "color": (135,206,235)},
     9:  {"name": "Background",    "color": (107,142, 35)},
 }
- 
+
 MEAN = [0.485, 0.456, 0.406]
 STD  = [0.229, 0.224, 0.225]
- 
+
 val_transform = A.Compose([
     A.Resize(512, 512),
     A.Normalize(mean=MEAN, std=STD),
     ToTensorV2()
 ])
- 
+
 # ─────────────────────────────────────────────
 #  MODEL LOADER
 # ─────────────────────────────────────────────
+GDRIVE_FILE_ID = "1KP1X2h4fF9akU0Hsk3gZxYWWSzkLzDAH"
+MODEL_PATH     = "model_v2_epoch_10.pth"
+
 @st.cache_resource(show_spinner=False)
-def load_model(model_path):
+def load_model(_=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # ── Download weights from Google Drive if not cached ──
+    if not os.path.exists(MODEL_PATH):
+        with st.spinner("⬇️ Downloading model weights (first run only)…"):
+            url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
+            gdown.download(url, MODEL_PATH, quiet=False)
+
     model = smp.DeepLabV3Plus(
         encoder_name="resnet50",
         encoder_weights=None,
         in_channels=3,
         classes=NUM_CLASSES,
     )
-    state = torch.load(model_path, map_location=device)
+    state = torch.load(MODEL_PATH, map_location=device)
     model.load_state_dict(state)
     model.to(device)
     model.eval()
     return model, device
- 
+
 # ─────────────────────────────────────────────
 #  INFERENCE
 # ─────────────────────────────────────────────
@@ -297,18 +308,18 @@ def predict(image_np, model, device):
         logits = model(tensor)
     pred = torch.argmax(logits, dim=1).squeeze(0).cpu().numpy()
     return pred
- 
+
 def mask_to_color(pred_mask):
     h, w = pred_mask.shape
     color_mask = np.zeros((h, w, 3), dtype=np.uint8)
     for cls_id, info in CLASS_INFO.items():
         color_mask[pred_mask == cls_id] = info["color"]
     return color_mask
- 
+
 def overlay(image_np, color_mask, alpha=0.55):
     img_resized = cv2.resize(image_np, (color_mask.shape[1], color_mask.shape[0]))
     return cv2.addWeighted(img_resized, 1 - alpha, color_mask, alpha, 0)
- 
+
 def get_class_distribution(pred_mask):
     total = pred_mask.size
     dist = {}
@@ -317,14 +328,14 @@ def get_class_distribution(pred_mask):
         if pct > 0.1:
             dist[info["name"]] = round(pct, 1)
     return dict(sorted(dist.items(), key=lambda x: x[1], reverse=True))
- 
+
 def fig_to_pil(fig):
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight",
                 facecolor="#111827", edgecolor="none", dpi=150)
     buf.seek(0)
     return Image.open(buf)
- 
+
 # ─────────────────────────────────────────────
 #  SIDEBAR
 # ─────────────────────────────────────────────
@@ -343,16 +354,20 @@ with st.sidebar:
     </div>
     <hr style='border-color:rgba(255,255,255,0.07); margin: 0.5rem 0 1.5rem;'>
     """, unsafe_allow_html=True)
- 
+
     st.markdown("**⚙️ Settings**")
     overlay_alpha = st.slider("Overlay Opacity", 0.2, 0.9, 0.55, 0.05)
     show_distribution = st.checkbox("Show Class Distribution Chart", True)
- 
+
     st.markdown("<hr style='border-color:rgba(255,255,255,0.07); margin:1.5rem 0;'>", unsafe_allow_html=True)
-    st.markdown("**📂 Model Weights**")
-    model_file = st.file_uploader("Upload .pth file", type=["pth", "pt"],
-                                  label_visibility="collapsed")
- 
+    st.markdown("""
+    <div style='background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25);
+                border-radius:10px; padding:0.8rem 1rem; font-size:0.82rem;'>
+        <span style='color:#10b981; font-weight:700;'>✅ Model Auto-Loaded</span><br>
+        <span style='color:#64748b;'>Weights download automatically on first run</span>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.markdown("<hr style='border-color:rgba(255,255,255,0.07); margin:1.5rem 0;'>", unsafe_allow_html=True)
     st.markdown("""
     <div style='font-size:0.78rem; color:#64748b; line-height:1.7;'>
@@ -363,7 +378,7 @@ with st.sidebar:
         <b style='color:#94a3b8;'>Dataset</b><br>India Driving Dataset (IDD)
     </div>
     """, unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────
 #  HERO
 # ─────────────────────────────────────────────
@@ -384,7 +399,7 @@ st.markdown("""
     </div>
 </div>
 """, unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────
 #  COLOUR LEGEND
 # ─────────────────────────────────────────────
@@ -398,12 +413,12 @@ for cls_id, info in CLASS_INFO.items():
     </div>"""
 legend_html += "</div></div>"
 st.markdown(legend_html, unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────
 #  MAIN CONTENT
 # ─────────────────────────────────────────────
 col_upload, col_result = st.columns([1, 1.6], gap="large")
- 
+
 with col_upload:
     st.markdown('<div class="card-title">📤 Upload Image</div>', unsafe_allow_html=True)
     uploaded = st.file_uploader(
@@ -411,13 +426,13 @@ with col_upload:
         type=["jpg", "jpeg", "png"],
         label_visibility="collapsed"
     )
- 
+
     if uploaded:
         file_bytes = np.frombuffer(uploaded.read(), np.uint8)
         img_bgr    = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         img_rgb    = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         st.image(img_rgb, caption="Input Image", use_container_width=True)
- 
+
         h, w = img_rgb.shape[:2]
         st.markdown(f"""
         <div style='display:flex; gap:0.6rem; margin-top:0.8rem; flex-wrap:wrap;'>
@@ -435,7 +450,7 @@ with col_upload:
             </div>
         </div>
         """, unsafe_allow_html=True)
- 
+
         st.markdown("<div style='margin-top:1.5rem;'>", unsafe_allow_html=True)
         run_btn = st.button("🚀  Run Segmentation", use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -451,112 +466,97 @@ with col_upload:
         </div>
         """, unsafe_allow_html=True)
         run_btn = False
- 
+
 # ─── Results column ───
 with col_result:
     st.markdown('<div class="card-title">🔍 Segmentation Results</div>', unsafe_allow_html=True)
- 
+
     if uploaded and run_btn:
-        if model_file is None:
-            st.error("⚠️  Please upload your model weights (.pth) in the sidebar first.")
-        else:
-            # Save weights to temp file
-            import tempfile, os
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pth") as tmp:
-                tmp.write(model_file.read())
-                tmp_path = tmp.name
- 
-            with st.spinner(""):
-                progress = st.progress(0, text="Loading model weights…")
-                model, device = load_model(tmp_path)
-                progress.progress(35, text="Running inference…")
-                t0 = time.time()
-                pred_mask  = predict(img_rgb, model, device)
-                infer_ms   = (time.time() - t0) * 1000
-                progress.progress(75, text="Rendering colour map…")
-                color_mask = mask_to_color(pred_mask)
-                ov         = overlay(img_rgb, color_mask, overlay_alpha)
-                progress.progress(100, text="Done ✓")
-                time.sleep(0.3)
-                progress.empty()
- 
-            os.unlink(tmp_path)
- 
-            # ── Tabs ──
-            tab1, tab2, tab3 = st.tabs(["🎨 Overlay", "🗺️ Mask", "📊 Analysis"])
- 
-            with tab1:
-                st.image(ov, caption="Segmentation Overlay", use_container_width=True)
- 
-            with tab2:
-                st.image(color_mask, caption="Semantic Mask", use_container_width=True)
- 
-            with tab3:
-                dist = get_class_distribution(pred_mask)
- 
-                # Inference time badge
+        with st.spinner(""):
+            progress = st.progress(0, text="Loading model weights…")
+            model, device = load_model()
+            progress.progress(35, text="Running inference…")
+            t0 = time.time()
+            pred_mask  = predict(img_rgb, model, device)
+            infer_ms   = (time.time() - t0) * 1000
+            progress.progress(75, text="Rendering colour map…")
+            color_mask = mask_to_color(pred_mask)
+            ov         = overlay(img_rgb, color_mask, overlay_alpha)
+            progress.progress(100, text="Done ✓")
+            time.sleep(0.3)
+            progress.empty()
+
+        # ── Tabs ──
+        tab1, tab2, tab3 = st.tabs(["🎨 Overlay", "🗺️ Mask", "📊 Analysis"])
+
+        with tab1:
+            st.image(ov, caption="Segmentation Overlay", use_container_width=True)
+
+        with tab2:
+            st.image(color_mask, caption="Semantic Mask", use_container_width=True)
+
+        with tab3:
+            dist = get_class_distribution(pred_mask)
+
+            st.markdown(f"""
+            <div style='display:flex; gap:0.8rem; margin-bottom:1.2rem; flex-wrap:wrap;'>
+                <div class="metric-box" style='flex:1'>
+                    <div class="metric-val">{infer_ms:.0f}</div>
+                    <div class="metric-lbl">Inference (ms)</div>
+                </div>
+                <div class="metric-box" style='flex:1'>
+                    <div class="metric-val">{len(dist)}</div>
+                    <div class="metric-lbl">Classes Detected</div>
+                </div>
+                <div class="metric-box" style='flex:1'>
+                    <div class="metric-val">{"GPU" if str(device)=="cuda" else "CPU"}</div>
+                    <div class="metric-lbl">Device</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if show_distribution:
+                names  = list(dist.keys())
+                values = list(dist.values())
+                colors_hex = []
+                for n in names:
+                    for c in CLASS_INFO.values():
+                        if c["name"] == n:
+                            r,g,b = c["color"]
+                            colors_hex.append(f"#{r:02x}{g:02x}{b:02x}")
+                            break
+
+                fig, ax = plt.subplots(figsize=(6, max(3, len(names)*0.5)))
+                fig.patch.set_facecolor("#111827")
+                ax.set_facecolor("#1a2235")
+                bars = ax.barh(names, values, color=colors_hex, edgecolor="none", height=0.55)
+                for bar, val in zip(bars, values):
+                    ax.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height()/2,
+                            f"{val}%", va="center", fontsize=8, color="#94a3b8", fontweight="600")
+                ax.set_xlabel("Coverage (%)", color="#64748b", fontsize=9)
+                ax.tick_params(colors="#94a3b8", labelsize=8)
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("rgba(255,255,255,0.07)")
+                ax.invert_yaxis()
+                ax.xaxis.label.set_color("#64748b")
+                plt.tight_layout()
+                st.image(fig_to_pil(fig), use_container_width=True)
+                plt.close(fig)
+
+            if dist:
+                top_class = list(dist.keys())[0]
+                top_pct   = list(dist.values())[0]
                 st.markdown(f"""
-                <div style='display:flex; gap:0.8rem; margin-bottom:1.2rem; flex-wrap:wrap;'>
-                    <div class="metric-box" style='flex:1'>
-                        <div class="metric-val">{infer_ms:.0f}</div>
-                        <div class="metric-lbl">Inference (ms)</div>
-                    </div>
-                    <div class="metric-box" style='flex:1'>
-                        <div class="metric-val">{len(dist)}</div>
-                        <div class="metric-lbl">Classes Detected</div>
-                    </div>
-                    <div class="metric-box" style='flex:1'>
-                        <div class="metric-val">{"GPU" if str(device)=="cuda" else "CPU"}</div>
-                        <div class="metric-lbl">Device</div>
-                    </div>
+                <div style='background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.2);
+                            border-radius:12px; padding:1rem 1.2rem; margin-top:0.5rem;'>
+                    <span style='font-size:0.75rem; color:#64748b; text-transform:uppercase;
+                                 letter-spacing:0.1em;'>Dominant Class</span><br>
+                    <span style='font-family:Syne,sans-serif; font-size:1.4rem; font-weight:800;
+                                 color:#00d4ff;'>{top_class}</span>
+                    <span style='color:#64748b; font-size:0.9rem;'> · {top_pct}% of scene</span>
                 </div>
                 """, unsafe_allow_html=True)
- 
-                if show_distribution:
-                    names  = list(dist.keys())
-                    values = list(dist.values())
-                    colors_hex = []
-                    for n in names:
-                        for c in CLASS_INFO.values():
-                            if c["name"] == n:
-                                r,g,b = c["color"]
-                                colors_hex.append(f"#{r:02x}{g:02x}{b:02x}")
-                                break
- 
-                    fig, ax = plt.subplots(figsize=(6, max(3, len(names)*0.5)))
-                    fig.patch.set_facecolor("#111827")
-                    ax.set_facecolor("#1a2235")
-                    bars = ax.barh(names, values, color=colors_hex,
-                                   edgecolor="none", height=0.55)
-                    for bar, val in zip(bars, values):
-                        ax.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height()/2,
-                                f"{val}%", va="center", fontsize=8,
-                                color="#94a3b8", fontweight="600")
-                    ax.set_xlabel("Coverage (%)", color="#64748b", fontsize=9)
-                    ax.tick_params(colors="#94a3b8", labelsize=8)
-                    for spine in ax.spines.values():
-                        spine.set_edgecolor("rgba(255,255,255,0.07)")
-                    ax.invert_yaxis()
-                    ax.xaxis.label.set_color("#64748b")
-                    plt.tight_layout()
-                    st.image(fig_to_pil(fig), use_container_width=True)
-                    plt.close(fig)
- 
-                # Top class banner
-                if dist:
-                    top_class = list(dist.keys())[0]
-                    top_pct   = list(dist.values())[0]
-                    st.markdown(f"""
-                    <div style='background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.2);
-                                border-radius:12px; padding:1rem 1.2rem; margin-top:0.5rem;'>
-                        <span style='font-size:0.75rem; color:#64748b; text-transform:uppercase;
-                                     letter-spacing:0.1em;'>Dominant Class</span><br>
-                        <span style='font-family:Syne,sans-serif; font-size:1.4rem; font-weight:800;
-                                     color:#00d4ff;'>{top_class}</span>
-                        <span style='color:#64748b; font-size:0.9rem;'> · {top_pct}% of scene</span>
-                    </div>
-                    """, unsafe_allow_html=True)
- 
+
     elif not uploaded:
         st.markdown("""
         <div style='height:380px; display:flex; flex-direction:column;
@@ -568,7 +568,7 @@ with col_result:
                         color:#334155;'>Awaiting image upload…</div>
         </div>
         """, unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────
 #  FOOTER
 # ─────────────────────────────────────────────
